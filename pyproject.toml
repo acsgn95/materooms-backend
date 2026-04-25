@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "materooms-backend"
+version = "0.1.0"
+description = "MateRooms — Turkey's Verified Flatmate Platform API"
+authors = ["Ahmet Coşgun <ahmetcosgun3222@gmail.com>"]
+python = "^3.12"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = {extras = ["all"], version = "^0.115.0"}
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.36"}
+asyncpg = "^0.30.0"
+alembic = "^1.14.0"
+redis = {extras = ["hiredis"], version = "^5.2.0"}
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+pydantic-settings = "^2.6.0"
+httpx = "^0.28.0"
+python-multipart = "^0.0.20"
+Pillow = "^11.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+pytest-asyncio = "^0.24.0"
+pytest-httpx = "^0.35.0"
+httpx = "^0.28.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
