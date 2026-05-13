@@ -3,7 +3,6 @@ name = "materooms-backend"
 version = "0.1.0"
 description = "MateRooms — Turkey's Verified Flatmate Platform API"
 authors = ["Ahmet Coşgun <ahmetcosgun3222@gmail.com>"]
-python = "^3.12"
 
 [tool.poetry.dependencies]
 python = "^3.12"
