@@ -8,3 +8,4 @@ uploads/
 poetry.lock
 dist/
 *.egg-info/
+.claude/
