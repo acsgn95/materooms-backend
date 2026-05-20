@@ -32,6 +32,16 @@ class ListingUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class ListingOwnerBrief(BaseModel):
+    id: uuid.UUID
+    full_name: str | None = None
+    profile_photo_url: str | None = None
+    verification_badges: list[str] = []
+    flatmate_score: int | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class ListingOut(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
@@ -52,6 +62,7 @@ class ListingOut(BaseModel):
     expires_at: datetime
     created_at: datetime
     photos: list["ListingPhotoOut"] = []
+    owner: ListingOwnerBrief | None = None
 
     model_config = {"from_attributes": True}
 
