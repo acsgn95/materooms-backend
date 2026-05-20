@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.db.redis import get_redis
@@ -136,7 +137,9 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         messages = {"OTP_EXPIRED": "Kod süresi dolmuş", "TOO_MANY_ATTEMPTS": "Çok fazla yanlış deneme", "INVALID_CODE": "Geçersiz kod"}
         raise HTTPException(status_code=400, detail=err(reason, messages.get(reason, "Geçersiz kod")).model_dump())
 
-    result = await db.execute(select(User).where(User.phone == body.phone, User.is_deleted == False))
+    result = await db.execute(
+        select(User).options(selectinload(User.profile)).where(User.phone == body.phone, User.is_deleted == False)
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail=err("USER_NOT_FOUND", "Kullanıcı bulunamadı").model_dump())
@@ -149,7 +152,6 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     ))
     await db.commit()
-    await db.refresh(user)
 
     return ok(AuthResponse(user=user, access_token=access_token, refresh_token=raw_refresh))
 
