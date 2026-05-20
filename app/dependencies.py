@@ -7,6 +7,7 @@ from app.db.redis import get_redis
 from app.core.security import decode_token
 from app.models.user import User
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 bearer = HTTPBearer()
 
@@ -26,7 +27,9 @@ async def get_current_user(
 
     user_id = payload.get("sub")
     result = await db.execute(
-        select(User).where(User.id == user_id, User.is_active == True, User.is_deleted == False)
+        select(User)
+        .options(selectinload(User.profile))
+        .where(User.id == user_id, User.is_active == True, User.is_deleted == False)
     )
     user = result.scalar_one_or_none()
 
