@@ -20,7 +20,7 @@ class FlatmateScore(Base):
     last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="score")
-    events: Mapped[list["ScoreEvent"]] = relationship("ScoreEvent", back_populates="score_owner")
+    events: Mapped[list["ScoreEvent"]] = relationship("ScoreEvent", back_populates="score_owner", primaryjoin="FlatmateScore.user_id == ScoreEvent.user_id", foreign_keys="ScoreEvent.user_id")
 
 
 class ScoreEvent(Base):
