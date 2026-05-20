@@ -65,6 +65,7 @@ async def list_listings(
     listing_type: str | None = Query(None),
     budget_max: int | None = Query(None),
     budget_min: int | None = Query(None),
+    user_id: uuid.UUID | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -81,6 +82,8 @@ async def list_listings(
         filters.append(Listing.rent_full <= budget_max)
     if budget_min:
         filters.append(Listing.rent_full >= budget_min)
+    if user_id:
+        filters.append(Listing.user_id == user_id)
 
     count_result = await db.execute(select(func.count()).select_from(Listing).where(and_(*filters)))
     total = count_result.scalar() or 0
