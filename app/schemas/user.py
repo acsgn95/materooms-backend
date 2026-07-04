@@ -45,7 +45,8 @@ class UserProfileOut(BaseModel):
 
 class UserOut(BaseModel):
     id: uuid.UUID
-    phone: str
+    phone: str | None
+    email: str | None = None
     created_at: datetime
     profile: UserProfileOut | None
 
