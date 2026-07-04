@@ -12,6 +12,7 @@ from app.models.listing import Listing
 from app.models.score import FlatmateScore
 from app.schemas.listing import ListingCreate, ListingUpdate, ListingOut, ListingOwnerBrief
 from app.schemas.common import ok, ResponseEnvelope, PaginationMeta
+from app.core.telegram import notify_new_listing
 
 router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -55,6 +56,7 @@ async def create_listing(body: ListingCreate, current_user: User = Depends(get_c
 
     result = await db.execute(_listing_query_with_owner().where(Listing.id == listing.id))
     fresh = result.scalar_one()
+    await notify_new_listing(body.title, body.city, body.listing_type, body.rent_full)
     return ok(await _build_listing_out(fresh, db))
 
 

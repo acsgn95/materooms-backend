@@ -13,6 +13,7 @@ from app.models.user import User, UserProfile, OtpCode, RefreshToken
 from app.schemas.auth import SendOtpRequest, VerifyOtpRequest, RegisterRequest, LoginRequest, TokenRefreshRequest, AuthResponse, TokenResponse
 from app.schemas.common import ok, err, ResponseEnvelope
 from app.config import settings
+from app.core.telegram import notify_new_user
 import hashlib
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -124,6 +125,8 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     await db.commit()
     await db.refresh(user)
     await db.refresh(user.profile)
+
+    await notify_new_user(phone, body.full_name, body.city)
 
     return ok(AuthResponse(user=user, access_token=access_token, refresh_token=raw_refresh))
 

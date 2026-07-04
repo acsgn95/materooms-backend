@@ -27,6 +27,9 @@ class Settings(BaseSettings):
 
     ADMIN_SECRET: str = "change-me-admin-secret"
 
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "https://www.materooms.com",
