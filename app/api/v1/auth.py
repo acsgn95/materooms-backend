@@ -10,11 +10,14 @@ from app.core.otp import create_otp, verify_otp, send_otp
 from app.core.security import create_access_token, create_temp_token, create_refresh_token, decode_token
 from app.core.rate_limit import rate_limit
 from app.models.user import User, UserProfile, OtpCode, RefreshToken
-from app.schemas.auth import SendOtpRequest, VerifyOtpRequest, RegisterRequest, LoginRequest, TokenRefreshRequest, AuthResponse, TokenResponse
+from app.schemas.auth import SendOtpRequest, VerifyOtpRequest, RegisterRequest, LoginRequest, TokenRefreshRequest, AuthResponse, TokenResponse, EmailRegisterRequest, EmailLoginRequest, PasswordResetRequest, PasswordResetConfirm
 from app.schemas.common import ok, err, ResponseEnvelope
 from app.config import settings
 from app.core.telegram import notify_new_user
+from app.core.password import hash_password, verify_password
+from app.core.mail import send_otp_email, send_password_reset_email
 import hashlib
+import secrets
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -179,3 +182,119 @@ async def refresh_token(body: TokenRefreshRequest, db: AsyncSession = Depends(ge
     await db.commit()
 
     return ok(TokenResponse(access_token=access_token, refresh_token=raw_refresh))
+
+
+@router.post("/register/email", response_model=ResponseEnvelope[AuthResponse])
+async def register_with_email(body: EmailRegisterRequest, request: Request, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
+    await rate_limit(request, redis, limit=10)
+
+    result = await db.execute(select(User).where(User.email == body.email, User.is_deleted == False))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=err("EMAIL_ALREADY_EXISTS", "Bu e-posta adresi zaten kayıtlı").model_dump())
+
+    user = User(email=body.email, password_hash=hash_password(body.password))
+    db.add(user)
+    await db.flush()
+
+    profile = UserProfile(
+        user_id=user.id,
+        full_name=body.full_name,
+        age=body.age,
+        gender=body.gender,
+        city=body.city,
+        neighborhood=body.neighborhood,
+        occupation=body.occupation,
+        budget_min=body.budget_min,
+        budget_max=body.budget_max,
+        bio=body.bio,
+        sleep_schedule=body.sleep_schedule,
+        cleanliness_level=body.cleanliness_level,
+        smoking=body.smoking,
+        pets=body.pets,
+        guests=body.guests,
+        noise_tolerance=body.noise_tolerance,
+        verification_badges=[],
+        kvkk_consent=body.kvkk_consent,
+        kvkk_consent_at=datetime.now(timezone.utc),
+    )
+    db.add(profile)
+
+    from app.models.score import FlatmateScore, ScoreEvent
+    score = FlatmateScore(user_id=user.id, total_score=0)
+    db.add(score)
+
+    access_token = create_access_token(str(user.id))
+    raw_refresh, hashed_refresh = create_refresh_token()
+    db.add(RefreshToken(
+        user_id=user.id,
+        token_hash=hashed_refresh,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    ))
+
+    await db.commit()
+    await db.refresh(user)
+    await db.refresh(user.profile)
+
+    await notify_new_user(body.email, body.full_name, body.city)
+
+    return ok(AuthResponse(user=user, access_token=access_token, refresh_token=raw_refresh))
+
+
+@router.post("/login/email", response_model=ResponseEnvelope[AuthResponse])
+async def login_with_email(body: EmailLoginRequest, request: Request, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
+    await rate_limit(request, redis, limit=10)
+
+    result = await db.execute(
+        select(User).options(selectinload(User.profile)).where(User.email == body.email, User.is_deleted == False)
+    )
+    user = result.scalar_one_or_none()
+    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail=err("INVALID_CREDENTIALS", "E-posta veya şifre hatalı").model_dump())
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail=err("ACCOUNT_BANNED", "Hesabınız askıya alınmıştır").model_dump())
+
+    access_token = create_access_token(str(user.id))
+    raw_refresh, hashed_refresh = create_refresh_token()
+    db.add(RefreshToken(
+        user_id=user.id,
+        token_hash=hashed_refresh,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    ))
+    await db.commit()
+
+    return ok(AuthResponse(user=user, access_token=access_token, refresh_token=raw_refresh))
+
+
+@router.post("/password-reset/request", response_model=ResponseEnvelope[dict])
+async def request_password_reset(body: PasswordResetRequest, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
+    result = await db.execute(select(User).where(User.email == body.email, User.is_deleted == False))
+    user = result.scalar_one_or_none()
+    if not user:
+        return ok({"message": "Eğer bu e-posta kayıtlıysa sıfırlama bağlantısı gönderildi"})
+
+    token = secrets.token_urlsafe(32)
+    await redis.setex(f"pwd_reset:{token}", 900, str(user.id))
+
+    reset_url = f"https://materooms.com/auth/reset-password?token={token}"
+    await send_password_reset_email(body.email, reset_url)
+
+    return ok({"message": "Eğer bu e-posta kayıtlıysa sıfırlama bağlantısı gönderildi"})
+
+
+@router.post("/password-reset/confirm", response_model=ResponseEnvelope[dict])
+async def confirm_password_reset(body: PasswordResetConfirm, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
+    user_id = await redis.get(f"pwd_reset:{body.token}")
+    if not user_id:
+        raise HTTPException(status_code=400, detail=err("INVALID_TOKEN", "Geçersiz veya süresi dolmuş link").model_dump())
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail=err("USER_NOT_FOUND", "Kullanıcı bulunamadı").model_dump())
+
+    user.password_hash = hash_password(body.password)
+    await db.commit()
+    await redis.delete(f"pwd_reset:{body.token}")
+
+    return ok({"message": "Şifreniz başarıyla güncellendi"})

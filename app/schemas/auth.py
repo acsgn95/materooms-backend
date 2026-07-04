@@ -75,5 +75,61 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class EmailRegisterRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    age: int | None = None
+    gender: str | None = None
+    city: str
+    neighborhood: str | None = None
+    occupation: str | None = None
+    budget_min: int | None = None
+    budget_max: int | None = None
+    bio: str | None = None
+    sleep_schedule: str | None = None
+    cleanliness_level: str | None = None
+    smoking: bool = False
+    pets: bool = False
+    guests: str | None = None
+    noise_tolerance: str | None = None
+    kvkk_consent: bool
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Şifre en az 8 karakter olmalı")
+        return v
+
+    @field_validator("kvkk_consent")
+    @classmethod
+    def must_consent(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("KVKK onayı zorunludur")
+        return v
+
+
+class EmailLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Şifre en az 8 karakter olmalı")
+        return v
+
+
 from app.schemas.user import UserOut
 AuthResponse.model_rebuild()
