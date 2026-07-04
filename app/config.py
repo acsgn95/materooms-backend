@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     ENVIRONMENT: str = "development"
 
+    ADMIN_SECRET: str = "change-me-admin-secret"
+
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "https://www.materooms.com",
