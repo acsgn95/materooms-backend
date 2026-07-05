@@ -17,6 +17,7 @@ from app.core.telegram import notify_new_user
 from app.core.password import hash_password, verify_password
 from app.core.mail import send_otp_email, send_password_reset_email
 from app.core.security import create_access_token, create_temp_token, create_refresh_token, decode_token, create_email_temp_token
+from app.core.firebase_verify import verify_firebase_token
 import hashlib
 import secrets
 
@@ -350,3 +351,76 @@ async def confirm_password_reset(body: PasswordResetConfirm, db: AsyncSession = 
     await redis.delete(f"pwd_reset:{body.token}")
 
     return ok({"message": "Şifreniz başarıyla güncellendi"})
+
+
+from pydantic import BaseModel as PydanticBaseModel
+
+class FirebasePhoneRequest(PydanticBaseModel):
+    id_token: str
+    full_name: str | None = None
+    city: str | None = None
+    kvkk_consent: bool = False
+
+
+@router.post("/firebase/phone", response_model=ResponseEnvelope[AuthResponse])
+async def firebase_phone_auth(body: FirebasePhoneRequest, request: Request, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
+    await rate_limit(request, redis, limit=10)
+
+    try:
+        payload = await verify_firebase_token(body.id_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail=err("INVALID_FIREBASE_TOKEN", "Geçersiz Firebase token").model_dump())
+
+    phone = payload.get("phone_number")
+    if not phone:
+        raise HTTPException(status_code=400, detail=err("NO_PHONE", "Telefon numarası bulunamadı").model_dump())
+
+    result = await db.execute(
+        select(User).options(selectinload(User.profile)).where(User.phone == phone, User.is_deleted == False)
+    )
+    user = result.scalar_one_or_none()
+
+    if user:
+        access_token = create_access_token(str(user.id))
+        raw_refresh, hashed_refresh = create_refresh_token()
+        db.add(RefreshToken(
+            user_id=user.id,
+            token_hash=hashed_refresh,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        ))
+        await db.commit()
+        return ok(AuthResponse(user=user, access_token=access_token, refresh_token=raw_refresh))
+
+    user = User(phone=phone)
+    db.add(user)
+    await db.flush()
+
+    profile = UserProfile(
+        user_id=user.id,
+        full_name=body.full_name,
+        city=body.city,
+        verification_badges=["phone_verified"],
+        kvkk_consent=body.kvkk_consent,
+        kvkk_consent_at=datetime.now(timezone.utc) if body.kvkk_consent else None,
+    )
+    db.add(profile)
+
+    from app.models.score import FlatmateScore, ScoreEvent
+    score = FlatmateScore(user_id=user.id, total_score=5, verification_level=5)
+    db.add(score)
+    db.add(ScoreEvent(user_id=user.id, event_type="phone_verified", delta=5, description="Telefon doğrulaması tamamlandı"))
+
+    access_token = create_access_token(str(user.id))
+    raw_refresh, hashed_refresh = create_refresh_token()
+    db.add(RefreshToken(
+        user_id=user.id,
+        token_hash=hashed_refresh,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    ))
+    await db.commit()
+    await db.refresh(user)
+    await db.refresh(user.profile)
+
+    await notify_new_user(phone, body.full_name, body.city)
+
+    return ok(AuthResponse(user=user, access_token=access_token, refresh_token=raw_refresh))

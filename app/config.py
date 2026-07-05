@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     GMAIL_CLIENT_SECRET: str = ""
     GMAIL_REFRESH_TOKEN: str = ""
 
+    FIREBASE_API_KEY: str = ""
+    FIREBASE_PROJECT_ID: str = ""
+
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "https://www.materooms.com",
