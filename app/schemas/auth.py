@@ -75,9 +75,27 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class EmailRegisterRequest(BaseModel):
+class SendEmailOtpRequest(BaseModel):
     email: str
+    purpose: str
+
+    @field_validator("purpose")
+    @classmethod
+    def validate_purpose(cls, v: str) -> str:
+        if v not in ("register", "login"):
+            raise ValueError("purpose 'register' veya 'login' olmalı")
+        return v
+
+
+class VerifyEmailOtpRequest(BaseModel):
+    email: str
+    code: str
+    purpose: str
+
+
+class EmailRegisterRequest(BaseModel):
     password: str
+    password_confirm: str
     full_name: str
     age: int | None = None
     gender: str | None = None
@@ -108,6 +126,10 @@ class EmailRegisterRequest(BaseModel):
         if not v:
             raise ValueError("KVKK onayı zorunludur")
         return v
+
+    def validate_passwords_match(self) -> None:
+        if self.password != self.password_confirm:
+            raise ValueError("Şifreler eşleşmiyor")
 
 
 class EmailLoginRequest(BaseModel):

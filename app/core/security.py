@@ -23,6 +23,15 @@ def create_temp_token(phone: str, scope: str = "register") -> str:
     )
 
 
+def create_email_temp_token(email: str, scope: str = "register_email") -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=10)
+    return jwt.encode(
+        {"email": email, "scope": scope, "exp": expire},
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+
+
 def create_refresh_token() -> tuple[str, str]:
     raw = secrets.token_hex(32)
     hashed = hashlib.sha256(raw.encode()).hexdigest()
