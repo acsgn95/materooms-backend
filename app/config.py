@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     MAIL_SERVER: str = "smtp.gmail.com"
     MAIL_PORT: int = 587
 
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
+    GMAIL_REFRESH_TOKEN: str = ""
+
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "https://www.materooms.com",

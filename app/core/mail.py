@@ -1,8 +1,23 @@
 import asyncio
-import smtplib
+import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 from app.config import settings
+
+
+def _build_gmail_service():
+    creds = Credentials(
+        token=None,
+        refresh_token=settings.GMAIL_REFRESH_TOKEN,
+        client_id=settings.GMAIL_CLIENT_ID,
+        client_secret=settings.GMAIL_CLIENT_SECRET,
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    return build("gmail", "v1", credentials=creds)
 
 
 def _send_email_sync(to: str, subject: str, html: str) -> None:
@@ -12,14 +27,13 @@ def _send_email_sync(to: str, subject: str, html: str) -> None:
     msg["To"] = to
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=10) as server:
-        server.starttls()
-        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-        server.sendmail(settings.MAIL_FROM, to, msg.as_string())
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    service = _build_gmail_service()
+    service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
 
 async def send_email(to: str, subject: str, html: str) -> None:
-    if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
+    if not settings.GMAIL_CLIENT_ID or not settings.GMAIL_REFRESH_TOKEN:
         print(f"[mail] To: {to} | Subject: {subject}")
         return
 
@@ -56,4 +70,4 @@ async def send_password_reset_email(to: str, reset_url: str) -> None:
         <p style="color:#666;font-size:14px;">Bu link 15 dakika geçerlidir. Şifre sıfırlama talebinde bulunmadıysanız bu e-postayı görmezden gelin.</p>
     </div>
     """
-    await send_email(to, "MateRooms - Şifre Sıfırlama", html)
+    await send_email(to, "MateRooms - Şifre Sıfırlama", reset_url)
