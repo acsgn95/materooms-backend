@@ -1,7 +1,21 @@
+import asyncio
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.config import settings
+
+
+def _send_email_sync(to: str, subject: str, html: str) -> None:
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"MateRooms <{settings.MAIL_FROM}>"
+    msg["To"] = to
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=10) as server:
+        server.starttls()
+        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        server.sendmail(settings.MAIL_FROM, to, msg.as_string())
 
 
 async def send_email(to: str, subject: str, html: str) -> None:
@@ -9,17 +23,8 @@ async def send_email(to: str, subject: str, html: str) -> None:
         print(f"[mail] To: {to} | Subject: {subject}")
         return
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"MateRooms <{settings.MAIL_FROM}>"
-    msg["To"] = to
-    msg.attach(MIMEText(html, "html"))
-
     try:
-        with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT) as server:
-            server.starttls()
-            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-            server.sendmail(settings.MAIL_FROM, to, msg.as_string())
+        await asyncio.to_thread(_send_email_sync, to, subject, html)
     except Exception as e:
         print(f"[mail] Error: {e}")
 
