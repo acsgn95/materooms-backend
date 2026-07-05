@@ -17,6 +17,8 @@ class ListingCreate(BaseModel):
     residents_total: int
     house_rules: dict = {"smoking": False, "pets": False, "gender_preference": "any"}
     amenities: list[str] = []
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class ListingUpdate(BaseModel):
@@ -58,6 +60,8 @@ class ListingOut(BaseModel):
     residents_total: int
     house_rules: dict
     amenities: list[str]
+    latitude: float | None = None
+    longitude: float | None = None
     is_active: bool
     expires_at: datetime
     created_at: datetime

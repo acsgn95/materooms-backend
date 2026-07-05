@@ -25,6 +25,8 @@ class Listing(Base):
     residents_total: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     house_rules: Mapped[dict] = mapped_column(JSONB, default=lambda: {"smoking": False, "pets": False, "gender_preference": "any"})
     amenities: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    latitude: Mapped[float | None] = mapped_column(nullable=True)
+    longitude: Mapped[float | None] = mapped_column(nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
