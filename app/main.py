@@ -1,7 +1,9 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.db.redis import close_redis
@@ -41,6 +43,10 @@ async def error_notification_middleware(request: Request, call_next):
     return response
 
 app.include_router(v1_router, prefix="/api/v1")
+
+uploads_dir = settings.UPLOAD_DIR
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 
 @app.get("/health")

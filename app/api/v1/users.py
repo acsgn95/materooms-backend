@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+import os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -9,6 +11,7 @@ from app.dependencies import get_current_user
 from app.models.user import User, UserProfile
 from app.schemas.user import UserOut, UserProfileUpdate
 from app.schemas.common import ok, ResponseEnvelope
+from app.config import settings
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -26,6 +29,43 @@ async def update_profile(body: UserProfileUpdate, current_user: User = Depends(g
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(current_user.profile, field, value)
 
+    await db.commit()
+
+    result = await db.execute(
+        select(User).options(selectinload(User.profile)).where(User.id == current_user.id)
+    )
+    fresh = result.scalar_one()
+    return ok(fresh)
+
+
+@router.post("/me/photo", response_model=ResponseEnvelope[UserOut])
+async def upload_photo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    allowed = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in allowed:
+        raise HTTPException(status_code=400, detail="Yalnızca JPG, PNG veya WebP yüklenebilir.")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Dosya boyutu 5MB'ı geçemez.")
+
+    ext = file.content_type.split("/")[-1].replace("jpeg", "jpg")
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    photos_dir = os.path.join(settings.UPLOAD_DIR, "photos")
+    os.makedirs(photos_dir, exist_ok=True)
+    filepath = os.path.join(photos_dir, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    photo_url = f"https://api.materooms.com/uploads/photos/{filename}"
+
+    if not current_user.profile:
+        raise HTTPException(status_code=404, detail="Profil bulunamadı")
+    current_user.profile.profile_photo_url = photo_url
     await db.commit()
 
     result = await db.execute(
