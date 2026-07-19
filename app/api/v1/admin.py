@@ -82,12 +82,16 @@ async def toggle_user(user_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.delete("/users/{user_id}", dependencies=[Depends(verify_admin)])
 async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
+    from datetime import datetime, timezone
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.is_deleted = True
     user.is_active = False
+    user.deleted_at = datetime.now(timezone.utc)
+    user.email = None
+    user.phone = None
     await db.commit()
     return {"success": True}
 
