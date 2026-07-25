@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.db.redis import get_redis
+from sqlalchemy.exc import IntegrityError
 from app.core.otp import create_otp, verify_otp, send_otp
 from app.core.security import create_access_token, create_temp_token, create_refresh_token, decode_token
 from app.core.rate_limit import rate_limit
@@ -244,9 +245,13 @@ async def register_with_email(body: EmailRegisterRequest, request: Request, db: 
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=err("EMAIL_ALREADY_EXISTS", "Bu e-posta adresi zaten kayıtlı").model_dump())
 
-    user = User(email=email, password_hash=hash_password(body.password))
-    db.add(user)
-    await db.flush()
+    try:
+        user = User(email=email, password_hash=hash_password(body.password))
+        db.add(user)
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=err("EMAIL_ALREADY_EXISTS", "Bu e-posta adresi zaten kayıtlı").model_dump())
 
     profile = UserProfile(
         user_id=user.id,
