@@ -20,5 +20,6 @@ jobs:
             cd /var/www/materooms/materooms-backend
             git pull origin master
             docker compose up -d --build
+            docker exec materooms_api alembic upgrade head
             docker image prune -f
             docker builder prune -f

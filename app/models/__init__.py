@@ -4,7 +4,7 @@ from app.models.message import Conversation, Message
 from app.models.verification import VerificationRequest
 from app.models.score import FlatmateScore, ScoreEvent
 from app.models.feature_flag import FeatureFlag
-from app.models.house import House, HouseMembership, Expense, ExpenseSplit
+from app.models.house import Group, GroupMembership, Expense, ExpenseSplit
 
 __all__ = [
     "User", "UserProfile", "OtpCode", "RefreshToken",
@@ -13,5 +13,5 @@ __all__ = [
     "VerificationRequest",
     "FlatmateScore", "ScoreEvent",
     "FeatureFlag",
-    "House", "HouseMembership", "Expense", "ExpenseSplit",
+    "Group", "GroupMembership", "Expense", "ExpenseSplit",
 ]

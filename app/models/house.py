@@ -1,56 +1,41 @@
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
-from sqlalchemy import String, Boolean, DateTime, Date, Integer, SmallInteger, Text, ForeignKey, Numeric, func
+from sqlalchemy import String, Boolean, DateTime, Date, Text, ForeignKey, Numeric, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
 
 
-class House(Base):
-    __tablename__ = "houses"
+class Group(Base):
+    __tablename__ = "groups"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    house_type: Mapped[str] = mapped_column(String(20), nullable=False, default="apartment")
-    city: Mapped[str] = mapped_column(String(50), nullable=False)
-    district: Mapped[str] = mapped_column(String(100), nullable=False)
-    neighborhood: Mapped[str | None] = mapped_column(String(100))
-    address_detail: Mapped[str | None] = mapped_column(String(300))
-    latitude: Mapped[float | None] = mapped_column(nullable=True)
-    longitude: Mapped[float | None] = mapped_column(nullable=True)
-
-    total_rooms: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
-    floor: Mapped[int | None] = mapped_column(SmallInteger)
-    size_sqm: Mapped[int | None] = mapped_column(SmallInteger)
-    rent_full: Mapped[int | None] = mapped_column(Integer)
-
-    amenities: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
-    house_rules: Mapped[dict] = mapped_column(JSONB, default=lambda: {"smoking": False, "pets": False, "gender_preference": "any"})
-
+    description: Mapped[str | None] = mapped_column(String(300))
+    invite_code: Mapped[str | None] = mapped_column(String(12), unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     owner: Mapped["User"] = relationship("User", foreign_keys=[owner_id])
-    memberships: Mapped[list["HouseMembership"]] = relationship("HouseMembership", back_populates="house", cascade="all, delete-orphan")
-    expenses: Mapped[list["Expense"]] = relationship("Expense", back_populates="house", cascade="all, delete-orphan")
+    memberships: Mapped[list["GroupMembership"]] = relationship("GroupMembership", back_populates="group", cascade="all, delete-orphan")
+    expenses: Mapped[list["Expense"]] = relationship("Expense", back_populates="group", cascade="all, delete-orphan")
 
 
-class HouseMembership(Base):
-    __tablename__ = "house_memberships"
+class GroupMembership(Base):
+    __tablename__ = "group_memberships"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    house_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("houses.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role: Mapped[str] = mapped_column(String(10), nullable=False, default="tenant")  # owner | tenant
+    role: Mapped[str] = mapped_column(String(10), nullable=False, default="member")  # owner | member
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    house: Mapped["House"] = relationship("House", back_populates="memberships")
+    group: Mapped["Group"] = relationship("Group", back_populates="memberships")
     user: Mapped["User"] = relationship("User")
 
 
@@ -58,7 +43,7 @@ class Expense(Base):
     __tablename__ = "expenses"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    house_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("houses.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
     paid_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -69,7 +54,7 @@ class Expense(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    house: Mapped["House"] = relationship("House", back_populates="expenses")
+    group: Mapped["Group"] = relationship("Group", back_populates="expenses")
     payer: Mapped["User"] = relationship("User", foreign_keys=[paid_by])
     splits: Mapped[list["ExpenseSplit"]] = relationship("ExpenseSplit", back_populates="expense", cascade="all, delete-orphan")
 

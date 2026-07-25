@@ -1,56 +1,33 @@
 import uuid
+import secrets
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from app.db.session import get_db
 from app.dependencies import get_current_user
-from app.models.user import User, UserProfile
-from app.models.house import House, HouseMembership, Expense, ExpenseSplit
+from app.models.user import User
+from app.models.house import Group, GroupMembership, Expense, ExpenseSplit
 from app.schemas.common import ok, ResponseEnvelope
 
-router = APIRouter(prefix="/houses", tags=["houses"])
+router = APIRouter(prefix="/groups", tags=["groups"])
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
-class HouseCreate(BaseModel):
+class GroupCreate(BaseModel):
     name: str
-    house_type: str = "apartment"
-    city: str
-    district: str
-    neighborhood: Optional[str] = None
-    address_detail: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    total_rooms: int = 1
-    floor: Optional[int] = None
-    size_sqm: Optional[int] = None
-    rent_full: Optional[int] = None
-    amenities: list[str] = []
-    house_rules: dict = {}
+    description: Optional[str] = None
 
 
-class HouseUpdate(BaseModel):
+class GroupUpdate(BaseModel):
     name: Optional[str] = None
-    house_type: Optional[str] = None
-    city: Optional[str] = None
-    district: Optional[str] = None
-    neighborhood: Optional[str] = None
-    address_detail: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    total_rooms: Optional[int] = None
-    floor: Optional[int] = None
-    size_sqm: Optional[int] = None
-    rent_full: Optional[int] = None
-    amenities: Optional[list[str]] = None
-    house_rules: Optional[dict] = None
+    description: Optional[str] = None
 
 
 class MemberInvite(BaseModel):
@@ -63,41 +40,27 @@ class ExpenseCreate(BaseModel):
     category: str = "other"
     expense_date: str  # ISO date string
     note: Optional[str] = None
-    split_user_ids: list[str] = []  # who shares this expense (excluding payer)
-
-
-class SettleRequest(BaseModel):
-    expense_id: str
-    user_id: str
+    split_user_ids: list[str] = []
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _house_out(house: House, memberships: list) -> dict:
+def _group_out(group: Group) -> dict:
+    active_members = [m for m in group.memberships if m.left_at is None]
     return {
-        "id": str(house.id),
-        "name": house.name,
-        "house_type": house.house_type,
-        "city": house.city,
-        "district": house.district,
-        "neighborhood": house.neighborhood,
-        "address_detail": house.address_detail,
-        "latitude": house.latitude,
-        "longitude": house.longitude,
-        "total_rooms": house.total_rooms,
-        "floor": house.floor,
-        "size_sqm": house.size_sqm,
-        "rent_full": house.rent_full,
-        "amenities": house.amenities,
-        "house_rules": house.house_rules,
-        "is_active": house.is_active,
-        "owner_id": str(house.owner_id),
-        "created_at": house.created_at.isoformat(),
-        "members": memberships,
+        "id": str(group.id),
+        "owner_id": str(group.owner_id),
+        "name": group.name,
+        "description": group.description,
+        "invite_code": group.invite_code,
+        "is_active": group.is_active,
+        "created_at": group.created_at.isoformat(),
+        "member_count": len(active_members),
+        "members": [_member_out(m) for m in active_members],
     }
 
 
-def _member_out(m: HouseMembership) -> dict:
+def _member_out(m: GroupMembership) -> dict:
     profile = m.user.profile if m.user else None
     return {
         "id": str(m.id),
@@ -114,7 +77,7 @@ def _expense_out(e: Expense) -> dict:
     payer_profile = e.payer.profile if e.payer else None
     return {
         "id": str(e.id),
-        "house_id": str(e.house_id),
+        "group_id": str(e.group_id),
         "paid_by": str(e.paid_by),
         "payer_name": payer_profile.full_name if payer_profile else None,
         "payer_photo": payer_profile.profile_photo_url if payer_profile else None,
@@ -137,130 +100,151 @@ def _expense_out(e: Expense) -> dict:
     }
 
 
-async def _require_member(house_id: str, user_id: uuid.UUID, db: AsyncSession) -> House:
+async def _load_group(group_id: str, db: AsyncSession) -> Group:
     result = await db.execute(
-        select(House)
+        select(Group)
         .options(
-            selectinload(House.memberships).selectinload(HouseMembership.user).selectinload(User.profile),
+            selectinload(Group.memberships).selectinload(GroupMembership.user).selectinload(User.profile),
         )
-        .where(House.id == house_id, House.is_active == True)
+        .where(Group.id == group_id, Group.is_active == True)
     )
-    house = result.scalar_one_or_none()
-    if not house:
-        raise HTTPException(status_code=404, detail="Ev bulunamadı")
-    is_member = any(str(m.user_id) == str(user_id) and m.left_at is None for m in house.memberships)
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Grup bulunamadı")
+    return group
+
+
+async def _require_member(group_id: str, user_id: uuid.UUID, db: AsyncSession) -> Group:
+    group = await _load_group(group_id, db)
+    is_member = any(str(m.user_id) == str(user_id) and m.left_at is None for m in group.memberships)
     if not is_member:
-        raise HTTPException(status_code=403, detail="Bu eve erişim yetkiniz yok")
-    return house
+        raise HTTPException(status_code=403, detail="Bu gruba erişim yetkiniz yok")
+    return group
 
 
-async def _require_owner(house_id: str, user_id: uuid.UUID, db: AsyncSession) -> House:
-    house = await _require_member(house_id, user_id, db)
-    if str(house.owner_id) != str(user_id):
-        raise HTTPException(status_code=403, detail="Yalnızca ev sahibi bu işlemi yapabilir")
-    return house
+async def _require_owner(group_id: str, user_id: uuid.UUID, db: AsyncSession) -> Group:
+    group = await _require_member(group_id, user_id, db)
+    if str(group.owner_id) != str(user_id):
+        raise HTTPException(status_code=403, detail="Yalnızca grup sahibi bu işlemi yapabilir")
+    return group
 
 
-# ── House CRUD ────────────────────────────────────────────────────────────────
+# ── Group CRUD ────────────────────────────────────────────────────────────────
 
 @router.get("/my", response_model=ResponseEnvelope[list])
-async def my_houses(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def my_groups(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(House)
+        select(Group)
         .options(
-            selectinload(House.memberships).selectinload(HouseMembership.user).selectinload(User.profile),
+            selectinload(Group.memberships).selectinload(GroupMembership.user).selectinload(User.profile),
         )
-        .join(HouseMembership, HouseMembership.house_id == House.id)
-        .where(HouseMembership.user_id == current_user.id, HouseMembership.left_at == None, House.is_active == True)
-        .order_by(House.created_at.desc())
+        .join(GroupMembership, GroupMembership.group_id == Group.id)
+        .where(GroupMembership.user_id == current_user.id, GroupMembership.left_at == None, Group.is_active == True)
+        .order_by(Group.created_at.desc())
     )
-    houses = result.scalars().unique().all()
-    return ok([_house_out(h, [_member_out(m) for m in h.memberships if m.left_at is None]) for h in houses])
+    groups = result.scalars().unique().all()
+    return ok([_group_out(g) for g in groups])
 
 
 @router.post("/", response_model=ResponseEnvelope[dict])
-async def create_house(body: HouseCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = House(
+async def create_group(body: GroupCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = Group(
         owner_id=current_user.id,
         name=body.name,
-        house_type=body.house_type,
-        city=body.city,
-        district=body.district,
-        neighborhood=body.neighborhood,
-        address_detail=body.address_detail,
-        latitude=body.latitude,
-        longitude=body.longitude,
-        total_rooms=body.total_rooms,
-        floor=body.floor,
-        size_sqm=body.size_sqm,
-        rent_full=body.rent_full,
-        amenities=body.amenities,
-        house_rules=body.house_rules or {"smoking": False, "pets": False, "gender_preference": "any"},
+        description=body.description,
     )
-    db.add(house)
+    db.add(group)
     await db.flush()
 
-    membership = HouseMembership(house_id=house.id, user_id=current_user.id, role="owner")
+    membership = GroupMembership(group_id=group.id, user_id=current_user.id, role="owner")
     db.add(membership)
     await db.commit()
-    await db.refresh(house)
+    await db.refresh(group)
 
-    return ok({"id": str(house.id), "name": house.name})
-
-
-@router.get("/{house_id}", response_model=ResponseEnvelope[dict])
-async def get_house(house_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_member(house_id, current_user.id, db)
-    members = [_member_out(m) for m in house.memberships if m.left_at is None]
-    return ok(_house_out(house, members))
+    return ok({"id": str(group.id), "name": group.name})
 
 
-@router.patch("/{house_id}", response_model=ResponseEnvelope[dict])
-async def update_house(house_id: str, body: HouseUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_owner(house_id, current_user.id, db)
+@router.get("/{group_id}", response_model=ResponseEnvelope[dict])
+async def get_group(group_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_member(group_id, current_user.id, db)
+    return ok(_group_out(group))
+
+
+@router.patch("/{group_id}", response_model=ResponseEnvelope[dict])
+async def update_group(group_id: str, body: GroupUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_owner(group_id, current_user.id, db)
     for field, value in body.model_dump(exclude_unset=True).items():
-        setattr(house, field, value)
+        setattr(group, field, value)
     await db.commit()
-    await db.refresh(house)
-    members = [_member_out(m) for m in house.memberships if m.left_at is None]
-    return ok(_house_out(house, members))
+    await db.refresh(group)
+    return ok(_group_out(group))
 
 
-@router.delete("/{house_id}", response_model=ResponseEnvelope[dict])
-async def deactivate_house(house_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_owner(house_id, current_user.id, db)
-    house.is_active = False
+@router.delete("/{group_id}", response_model=ResponseEnvelope[dict])
+async def deactivate_group(group_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_owner(group_id, current_user.id, db)
+    group.is_active = False
     await db.commit()
-    return ok({"message": "Ev devre dışı bırakıldı"})
+    return ok({"message": "Grup kapatıldı"})
+
+
+# ── Invite code ───────────────────────────────────────────────────────────────
+
+@router.post("/{group_id}/invite", response_model=ResponseEnvelope[dict])
+async def generate_invite(group_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_owner(group_id, current_user.id, db)
+    group.invite_code = secrets.token_urlsafe(8)
+    await db.commit()
+    return ok({"invite_code": group.invite_code})
+
+
+@router.post("/join/{invite_code}", response_model=ResponseEnvelope[dict])
+async def join_by_invite(invite_code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Group)
+        .options(selectinload(Group.memberships))
+        .where(Group.invite_code == invite_code, Group.is_active == True)
+    )
+    group = result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="Geçersiz davet kodu")
+
+    already = any(str(m.user_id) == str(current_user.id) and m.left_at is None for m in group.memberships)
+    if already:
+        raise HTTPException(status_code=409, detail="Zaten bu grubun üyesisin")
+
+    db.add(GroupMembership(group_id=group.id, user_id=current_user.id, role="member"))
+    await db.commit()
+    return ok({"group_id": str(group.id), "name": group.name})
 
 
 # ── Members ───────────────────────────────────────────────────────────────────
 
-@router.post("/{house_id}/members", response_model=ResponseEnvelope[dict])
-async def add_member(house_id: str, body: MemberInvite, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_owner(house_id, current_user.id, db)
+@router.post("/{group_id}/members", response_model=ResponseEnvelope[dict])
+async def add_member(group_id: str, body: MemberInvite, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_owner(group_id, current_user.id, db)
 
     result = await db.execute(select(User).where(User.id == body.user_id, User.is_deleted == False))
     target = result.scalar_one_or_none()
     if not target:
         raise HTTPException(status_code=404, detail="Kullanıcı bulunamadı")
 
-    already = any(str(m.user_id) == body.user_id and m.left_at is None for m in house.memberships)
+    already = any(str(m.user_id) == body.user_id and m.left_at is None for m in group.memberships)
     if already:
-        raise HTTPException(status_code=409, detail="Kullanıcı zaten bu evin üyesi")
+        raise HTTPException(status_code=409, detail="Kullanıcı zaten bu grubun üyesi")
 
-    db.add(HouseMembership(house_id=house.id, user_id=uuid.UUID(body.user_id), role="tenant"))
+    db.add(GroupMembership(group_id=group.id, user_id=uuid.UUID(body.user_id), role="member"))
     await db.commit()
     return ok({"message": "Üye eklendi"})
 
 
-@router.delete("/{house_id}/members/{user_id}", response_model=ResponseEnvelope[dict])
-async def remove_member(house_id: str, user_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_owner(house_id, current_user.id, db)
+@router.delete("/{group_id}/members/{user_id}", response_model=ResponseEnvelope[dict])
+async def remove_member(group_id: str, user_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    group = await _require_owner(group_id, current_user.id, db)
     if user_id == str(current_user.id):
-        raise HTTPException(status_code=400, detail="Ev sahibi kendini çıkaramaz")
+        raise HTTPException(status_code=400, detail="Grup sahibi kendini çıkaramaz")
 
-    membership = next((m for m in house.memberships if str(m.user_id) == user_id and m.left_at is None), None)
+    membership = next((m for m in group.memberships if str(m.user_id) == user_id and m.left_at is None), None)
     if not membership:
         raise HTTPException(status_code=404, detail="Üye bulunamadı")
 
@@ -271,23 +255,21 @@ async def remove_member(house_id: str, user_id: str, current_user: User = Depend
 
 # ── Expenses ──────────────────────────────────────────────────────────────────
 
-@router.get("/{house_id}/expenses", response_model=ResponseEnvelope[dict])
-async def list_expenses(house_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    await _require_member(house_id, current_user.id, db)
+@router.get("/{group_id}/expenses", response_model=ResponseEnvelope[dict])
+async def list_expenses(group_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await _require_member(group_id, current_user.id, db)
 
-    from datetime import date as date_type
     result = await db.execute(
         select(Expense)
         .options(
             selectinload(Expense.payer).selectinload(User.profile),
             selectinload(Expense.splits).selectinload(ExpenseSplit.user).selectinload(User.profile),
         )
-        .where(Expense.house_id == house_id)
+        .where(Expense.group_id == group_id)
         .order_by(Expense.expense_date.desc(), Expense.created_at.desc())
     )
     expenses = result.scalars().all()
 
-    # Calculate balances: who owes whom
     balances: dict[str, float] = {}
     for exp in expenses:
         payer_id = str(exp.paid_by)
@@ -297,28 +279,27 @@ async def list_expenses(house_id: str, current_user: User = Depends(get_current_
             uid = str(split.user_id)
             if uid == payer_id:
                 continue
-            # uid owes payer_id
             key = f"{uid}→{payer_id}"
             balances[key] = balances.get(key, 0) + float(split.amount)
 
-    balance_list = [{"from_user": k.split("→")[0], "to_user": k.split("→")[1], "amount": round(v, 2)} for k, v in balances.items() if v > 0.01]
+    balance_list = [
+        {"from_user": k.split("→")[0], "to_user": k.split("→")[1], "amount": round(v, 2)}
+        for k, v in balances.items() if v > 0.01
+    ]
 
-    return ok({
-        "expenses": [_expense_out(e) for e in expenses],
-        "balances": balance_list,
-    })
+    return ok({"expenses": [_expense_out(e) for e in expenses], "balances": balance_list})
 
 
-@router.post("/{house_id}/expenses", response_model=ResponseEnvelope[dict])
-async def create_expense(house_id: str, body: ExpenseCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_member(house_id, current_user.id, db)
+@router.post("/{group_id}/expenses", response_model=ResponseEnvelope[dict])
+async def create_expense(group_id: str, body: ExpenseCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await _require_member(group_id, current_user.id, db)
 
     from datetime import date as date_type
     expense_date = date_type.fromisoformat(body.expense_date)
     amount = Decimal(str(body.amount))
 
     expense = Expense(
-        house_id=uuid.UUID(house_id),
+        group_id=uuid.UUID(group_id),
         paid_by=current_user.id,
         title=body.title,
         amount=amount,
@@ -333,23 +314,22 @@ async def create_expense(house_id: str, body: ExpenseCreate, current_user: User 
     share = round(amount / len(all_split_ids), 2)
 
     for uid in all_split_ids:
-        settled = uid == str(current_user.id)
         db.add(ExpenseSplit(
             expense_id=expense.id,
             user_id=uuid.UUID(uid),
             amount=share,
-            is_settled=settled,
+            is_settled=(uid == str(current_user.id)),
         ))
 
     await db.commit()
     return ok({"id": str(expense.id)})
 
 
-@router.delete("/{house_id}/expenses/{expense_id}", response_model=ResponseEnvelope[dict])
-async def delete_expense(house_id: str, expense_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    await _require_member(house_id, current_user.id, db)
+@router.delete("/{group_id}/expenses/{expense_id}", response_model=ResponseEnvelope[dict])
+async def delete_expense(group_id: str, expense_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await _require_member(group_id, current_user.id, db)
 
-    result = await db.execute(select(Expense).where(Expense.id == expense_id, Expense.house_id == house_id))
+    result = await db.execute(select(Expense).where(Expense.id == expense_id, Expense.group_id == group_id))
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Harcama bulunamadı")
@@ -361,11 +341,11 @@ async def delete_expense(house_id: str, expense_id: str, current_user: User = De
     return ok({"message": "Harcama silindi"})
 
 
-@router.patch("/{house_id}/expenses/{expense_id}/settle/{user_id}", response_model=ResponseEnvelope[dict])
-async def settle_split(house_id: str, expense_id: str, user_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    house = await _require_member(house_id, current_user.id, db)
+@router.patch("/{group_id}/expenses/{expense_id}/settle/{user_id}", response_model=ResponseEnvelope[dict])
+async def settle_split(group_id: str, expense_id: str, user_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await _require_member(group_id, current_user.id, db)
 
-    result = await db.execute(select(Expense).where(Expense.id == expense_id, Expense.house_id == house_id))
+    result = await db.execute(select(Expense).where(Expense.id == expense_id, Expense.group_id == group_id))
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Harcama bulunamadı")
